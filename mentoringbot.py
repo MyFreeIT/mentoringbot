@@ -14,7 +14,7 @@ from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from aiogram.fsm.storage.memory import MemoryStorage
-# Инициализация диспетчера с MemoryStorage для хранения состояний (FSM) в оперативной памяти.
+# Инициализация диспетчера с MemoryStorage для хранения FSM состояний в оперативной памяти.
 # MemoryStorage подходит для небольших ботов, но если потребуется сохранение данных между запусками,
 # рекомендуется использовать постоянное хранилище (например, RedisStorage).
 from dotenv import load_dotenv
@@ -36,7 +36,9 @@ class MentorChatBot:
       - mentor_id (int): идентификатор менторского аккаунта.
       - access_password (str): пароль для доступа в систему.
       - users (dict): зарегистрированные участники {user_id: username}.
-      - sessions (dict): сессии чата между ментором и участниками.
+      - sessions (dict): текущая активная сессия чата между ментором и участником.
+          Для одновременной работы с несколькими студентами можно расширить логику.
+      - waitlist (list): очередь ожидающих подключения студентов.
       - history (dict): история сообщений для участников {participant_id: [сообщения]}.
     """
 
@@ -47,6 +49,7 @@ class MentorChatBot:
         self.access_password = access_password
         self.users = {}
         self.sessions = {}
+        self.waitlist = []  # Очередь студентов, ожидающих подключения
         self.history = {}
         self.register_handlers()
 
@@ -56,34 +59,25 @@ class MentorChatBot:
           - /start – приветственное сообщение с кнопкой "Войти".
           - Нажатие кнопки "Войти" (callback_data = "enter_school").
           - Проверка пароля для новых пользователей.
-          - Ожидание подключения ментором.
+          - Ожидание подключения ментора.
           - Пересылка сообщений участника ментору.
           - Команда /join для подключения ментором.
-          - Пересылка сообщений ментором участнику.
+          - Пересылка сообщений ментора участнику.
           - Вызов ментора (callback кнопка "Вызвать ментора").
           - Команда /end для завершения чата.
         """
-        # Команда /start – отправляем приветствие IT-школы.
         self.dp.message.register(self.send_welcome, Command("start"))
-        # Обработка нажатия кнопки "Войти" (callback_data = "enter_school").
         self.dp.callback_query.register(self.enter_school, lambda c: c.data == "enter_school")
-        # Если пользователь ещё не зарегистрирован (и не ментор) – проверить пароль.
         self.dp.message.register(self.check_password, lambda msg: (msg.from_user.id not in self.users) and (
-                    msg.from_user.id != self.mentor_id))
-        # Если пользователь уже зарегистрирован, но не подключён к ментору – ждем подключения.
+                msg.from_user.id != self.mentor_id))
         self.dp.message.register(self.waiting_message, lambda msg: (msg.from_user.id in self.users) and (
-                    msg.from_user.id not in self.sessions) and (msg.from_user.id != self.mentor_id))
-        # Если участник зарегистрирован и уже подключён – пересылаем его сообщение ментору.
+                msg.from_user.id not in self.sessions) and (msg.from_user.id != self.mentor_id))
         self.dp.message.register(self.forward_to_mentor,
                                  lambda msg: (msg.from_user.id in self.users) and (msg.from_user.id in self.sessions))
-        # Ментор использует команду /join для подключения к ожидающему участнику.
         self.dp.message.register(self.join_chat, Command("join"))
-        # Если ментор отправляет сообщение – пересылаем его участнику (если сессия установлена).
         self.dp.message.register(self.forward_to_user,
                                  lambda msg: (msg.from_user.id == self.mentor_id) and (self.mentor_id in self.sessions))
-        # При нажатии кнопки "Вызвать ментора" участник вызывает уведомление для ментора.
         self.dp.callback_query.register(self.call_mentor, lambda c: c.data == "call_mentor")
-        # Команда /end позволяет ментору завершить чат.
         self.dp.message.register(self.end_chat, Command("end"))
 
     async def delete_webhook(self):
@@ -108,11 +102,9 @@ class MentorChatBot:
         """
         Обработка нажатия кнопки 'Войти'. Просит ввести пароль для доступа.
         """
-        await self.bot.send_message(
-            callback_query.from_user.id,
-            "🔑 Пожалуйста, введите пароль для доступа в систему IT-школы."
-        )
-        await callback_query.answer()  # закрываем всплывающее уведомление
+        await self.bot.send_message(callback_query.from_user.id,
+                                    "🔑 Пожалуйста, введите пароль для доступа в систему IT-школы.")
+        await callback_query.answer()
 
     async def check_password(self, message: types.Message):
         """
@@ -134,36 +126,56 @@ class MentorChatBot:
         """
         await message.answer("✅ Вы уже зарегистрированы. Пожалуйста, ожидайте подключения ментора.")
 
+    async def call_mentor(self, callback_query: types.CallbackQuery):
+        """
+        Отправляет уведомление ментору о запросе участника на подключение.
+        Если сессия уже активна, добавляет студента в очередь ожидания.
+        """
+        user_id = callback_query.from_user.id
+        username = self.users.get(user_id, "Неизвестный")
+        if self.mentor_id in self.sessions:
+            if user_id not in self.waitlist:
+                self.waitlist.append(user_id)
+                await self.bot.send_message(
+                    self.mentor_id,
+                    f"⚡ Участник {username} ({user_id}) добавлен в очередь ожидания. "
+                    "Используйте /join после завершения текущего чата для подключения следующего студента."
+                )
+            else:
+                await self.bot.send_message(user_id, "Вы уже в очереди на подключение к ментору.")
+            await callback_query.answer("Вы добавлены в очередь! Ожидайте подключения ментора.")
+        else:
+            await self.bot.send_message(self.mentor_id,
+                                        f"⚡ Участник {username} ({user_id}) вызывает вас! Используйте /join.")
+            await callback_query.answer("Запрос отправлен! Ожидайте подключения ментора.")
+
     async def join_chat(self, message: types.Message):
         """
-        Команда для ментора: подключение к первому ожидающему участнику.
+        Команда для ментора: подключение к ожидающему участнику.
+        Если сессия уже активна, просит завершить текущий чат.
+        При наличии очереди выбирается первый ожидающий студент.
         """
         if message.from_user.id != self.mentor_id:
             await message.answer("❌ У вас нет прав ментора!")
             return
 
-        waiting = [uid for uid in self.users if uid not in self.sessions]
-        if not waiting:
-            await message.answer("🟢 Нет ожидающих участников. Ждите запроса.")
+        if self.mentor_id in self.sessions:
+            await message.answer("❌ Завершите текущий чат перед подключением нового участника.")
             return
 
-        user_id = waiting[0]
-        # Создаём взаимное подключение:
+        if self.waitlist:
+            user_id = self.waitlist.pop(0)
+        else:
+            waiting = [uid for uid in self.users if uid not in self.sessions and uid != self.mentor_id]
+            if not waiting:
+                await message.answer("🟢 Нет ожидающих участников. Ждите запроса.")
+                return
+            user_id = waiting[0]
+
         self.sessions[self.mentor_id] = user_id
         self.sessions[user_id] = self.mentor_id
-
-        await message.answer(f"📩 Вы подключены к участнику {self.users[user_id]}.")
+        await message.answer(f"📩 Вы подключены к участнику {self.users.get(user_id, 'Неизвестный')}.")
         await self.bot.send_message(user_id, "👨‍🏫 Ментор присоединился к чату и готов помочь!")
-
-    async def call_mentor(self, callback_query: types.CallbackQuery):
-        """
-        Отправляет уведомление ментору о запросе участника на подключение.
-        """
-        user_id = callback_query.from_user.id
-        username = self.users.get(user_id, "Неизвестный")
-        await self.bot.send_message(self.mentor_id,
-                                    f"⚡ Участник {username} ({user_id}) вызывает вас! Используйте /join.")
-        await callback_query.answer("Запрос отправлен! Ожидайте подключения ментора.")
 
     async def forward_to_mentor(self, message: types.Message):
         """
@@ -194,10 +206,12 @@ class MentorChatBot:
     async def end_chat(self, message: types.Message):
         """
         Завершает чат. Доступно только ментору.
+        После завершения чата ментору отправляется уведомление, если в очереди ожидают студенты.
         """
         if message.from_user.id != self.mentor_id:
             await message.answer("❌ Чат завершить может только ментор!")
             return
+
         if self.mentor_id in self.sessions:
             user_id = self.sessions.pop(self.mentor_id, None)
             if user_id:
@@ -205,6 +219,12 @@ class MentorChatBot:
                 self.sessions.pop(user_id, None)
                 self.history.pop(user_id, None)
             await message.answer("✅ Чат завершён.")
+            if self.waitlist:
+                next_id = self.waitlist[0]
+                await self.bot.send_message(
+                    self.mentor_id,
+                    f"⚡ Следующий студент ({self.users.get(next_id, 'Неизвестный')}) ожидает подключения. Используйте /join для подключения."
+                )
         else:
             await message.answer("❌ Нет активного чата для завершения.")
 
