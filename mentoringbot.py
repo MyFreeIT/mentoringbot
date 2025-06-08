@@ -37,7 +37,6 @@ class MentorChatBot:
       - access_password (str): пароль для доступа в систему.
       - users (dict): зарегистрированные участники {user_id: username}.
       - sessions (dict): текущая активная сессия чата между ментором и участником.
-          Для одновременной работы с несколькими студентами можно расширить логику.
       - waitlist (list): очередь ожидающих подключения студентов.
       - history (dict): история сообщений для участников {participant_id: [сообщения]}.
     """
@@ -68,15 +67,27 @@ class MentorChatBot:
         """
         self.dp.message.register(self.send_welcome, Command("start"))
         self.dp.callback_query.register(self.enter_school, lambda c: c.data == "enter_school")
-        self.dp.message.register(self.check_password, lambda msg: (msg.from_user.id not in self.users) and (
-                msg.from_user.id != self.mentor_id))
-        self.dp.message.register(self.waiting_message, lambda msg: (msg.from_user.id in self.users) and (
-                msg.from_user.id not in self.sessions) and (msg.from_user.id != self.mentor_id))
-        self.dp.message.register(self.forward_to_mentor,
-                                 lambda msg: (msg.from_user.id in self.users) and (msg.from_user.id in self.sessions))
+        self.dp.message.register(
+            self.check_password,
+            lambda msg: (msg.from_user.id not in self.users) and (msg.from_user.id != self.mentor_id)
+        )
+        self.dp.message.register(
+            self.waiting_message,
+            lambda msg: (msg.from_user.id in self.users) and (msg.from_user.id not in self.sessions) and (
+                    msg.from_user.id != self.mentor_id)
+        )
+        self.dp.message.register(
+            self.forward_to_mentor,
+            lambda msg: (msg.from_user.id in self.users) and (msg.from_user.id in self.sessions)
+        )
         self.dp.message.register(self.join_chat, Command("join"))
-        self.dp.message.register(self.forward_to_user,
-                                 lambda msg: (msg.from_user.id == self.mentor_id) and (self.mentor_id in self.sessions))
+        # Изменённый обработчик сообщений ментора: теперь пропускает сообщения, начинающиеся со слеша.
+        self.dp.message.register(
+            self.forward_to_user,
+            lambda msg: (msg.from_user.id == self.mentor_id)
+                        and (self.mentor_id in self.sessions)
+                        and (not (msg.text and msg.text.startswith('/')))
+        )
         self.dp.callback_query.register(self.call_mentor, lambda c: c.data == "call_mentor")
         self.dp.message.register(self.end_chat, Command("end"))
 
@@ -102,9 +113,11 @@ class MentorChatBot:
         """
         Обработка нажатия кнопки 'Войти'. Просит ввести пароль для доступа.
         """
-        await self.bot.send_message(callback_query.from_user.id,
-                                    "🔑 Пожалуйста, введите пароль для доступа в систему IT-школы.")
-        await callback_query.answer()
+        await self.bot.send_message(
+            callback_query.from_user.id,
+            "🔑 Пожалуйста, введите пароль для доступа в систему IT-школы."
+        )
+        await callback_query.answer()  # закрываем всплывающее уведомление
 
     async def check_password(self, message: types.Message):
         """
