@@ -1,0 +1,38 @@
+# Ignore Python bytecode files
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Ignore virtual environment directories
+venv/
+env/
+
+# Ignore logs and temporary files
+*.log
+debug.log
+
+# Ignore environment configuration files (security-sensitive)
+com/github/myfreeit/mentoringbot/.env
+
+# Ignore editor/IDE-specific files
+.vscode/
+.idea/
+*.swp
+
+# Ignore SonarQube temporary analysis files
+.sonar/
+.sonarcloud/
+coverage.xml
+
+# Ignore package manager cache files
+pip-wheel-metadata/
+
+# Ignore build artifacts
+build/
+dist/
+*.egg-info/
+
+# Ignore system-specific metadata
+.DS_Store
+Thumbs.db
