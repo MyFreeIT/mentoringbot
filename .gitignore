@@ -13,7 +13,7 @@ env/
 debug.log
 
 # Ignore environment configuration files (security-sensitive)
-com/github/myfreeit/mentoringbot/.env
+.env
 
 # Ignore editor/IDE-specific files
 .vscode/
