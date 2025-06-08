@@ -13,6 +13,10 @@ import os
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+from aiogram.fsm.storage.memory import MemoryStorage
+# Инициализация диспетчера с MemoryStorage для хранения состояний (FSM) в оперативной памяти.
+# MemoryStorage подходит для небольших ботов, но если потребуется сохранение данных между запусками,
+# рекомендуется использовать постоянное хранилище (например, RedisStorage).
 from dotenv import load_dotenv
 
 # Загружаем переменные окружения из .env
@@ -38,7 +42,7 @@ class MentorChatBot:
 
     def __init__(self, token, mentor_id, access_password):
         self.bot = Bot(token=token)
-        self.dp = Dispatcher()
+        self.dp = Dispatcher(storage=MemoryStorage())  # Используем MemoryStorage для хранения FSM состояний
         self.mentor_id = mentor_id
         self.access_password = access_password
         self.users = {}
@@ -64,32 +68,27 @@ class MentorChatBot:
         # Обработка нажатия кнопки "Войти" (callback_data = "enter_school").
         self.dp.callback_query.register(self.enter_school, lambda c: c.data == "enter_school")
         # Если пользователь ещё не зарегистрирован (и не ментор) – проверить пароль.
-        self.dp.message.register(
-            self.check_password,
-            lambda msg: (msg.from_user.id not in self.users) and (msg.from_user.id != self.mentor_id)
-        )
+        self.dp.message.register(self.check_password, lambda msg: (msg.from_user.id not in self.users) and (
+                    msg.from_user.id != self.mentor_id))
         # Если пользователь уже зарегистрирован, но не подключён к ментору – ждем подключения.
-        self.dp.message.register(
-            self.waiting_message,
-            lambda msg: (msg.from_user.id in self.users) and (msg.from_user.id not in self.sessions) and (
-                    msg.from_user.id != self.mentor_id)
-        )
+        self.dp.message.register(self.waiting_message, lambda msg: (msg.from_user.id in self.users) and (
+                    msg.from_user.id not in self.sessions) and (msg.from_user.id != self.mentor_id))
         # Если участник зарегистрирован и уже подключён – пересылаем его сообщение ментору.
-        self.dp.message.register(
-            self.forward_to_mentor,
-            lambda msg: (msg.from_user.id in self.users) and (msg.from_user.id in self.sessions)
-        )
+        self.dp.message.register(self.forward_to_mentor,
+                                 lambda msg: (msg.from_user.id in self.users) and (msg.from_user.id in self.sessions))
         # Ментор использует команду /join для подключения к ожидающему участнику.
         self.dp.message.register(self.join_chat, Command("join"))
         # Если ментор отправляет сообщение – пересылаем его участнику (если сессия установлена).
-        self.dp.message.register(
-            self.forward_to_user,
-            lambda msg: (msg.from_user.id == self.mentor_id) and (self.mentor_id in self.sessions)
-        )
+        self.dp.message.register(self.forward_to_user,
+                                 lambda msg: (msg.from_user.id == self.mentor_id) and (self.mentor_id in self.sessions))
         # При нажатии кнопки "Вызвать ментора" участник вызывает уведомление для ментора.
         self.dp.callback_query.register(self.call_mentor, lambda c: c.data == "call_mentor")
         # Команда /end позволяет ментору завершить чат.
         self.dp.message.register(self.end_chat, Command("end"))
+
+    async def delete_webhook(self):
+        """Удаляет вебхук перед запуском polling для предотвращения конфликта."""
+        await self.bot.delete_webhook(drop_pending_updates=True)
 
     async def send_welcome(self, message: types.Message):
         """
@@ -119,7 +118,6 @@ class MentorChatBot:
         """
         Проверяет введённый пароль. При соответствии регистрирует пользователя.
         """
-        # Обработка нового участника, который ещё не зарегистрирован.
         if message.text == self.access_password:
             self.users[message.from_user.id] = message.from_user.username
             self.history[message.from_user.id] = []
@@ -163,7 +161,6 @@ class MentorChatBot:
         """
         user_id = callback_query.from_user.id
         username = self.users.get(user_id, "Неизвестный")
-        # Отправляем уведомление ментору.
         await self.bot.send_message(self.mentor_id,
                                     f"⚡ Участник {username} ({user_id}) вызывает вас! Используйте /join.")
         await callback_query.answer("Запрос отправлен! Ожидайте подключения ментора.")
@@ -211,13 +208,16 @@ class MentorChatBot:
         else:
             await message.answer("❌ Нет активного чата для завершения.")
 
-    def run(self):
+    async def start_polling(self):
         """
-        Запускает бота в режиме polling.
+        Запускает polling после удаления вебхука.
         """
-        self.dp.run_polling(self.bot)
+        await self.delete_webhook()
+        await self.dp.start_polling(self.bot)
 
 
 if __name__ == "__main__":
     bot = MentorChatBot(TOKEN, MENTOR_ID, ACCESS_PASSWORD)
-    bot.run()
+    import asyncio
+
+    asyncio.run(bot.start_polling())
