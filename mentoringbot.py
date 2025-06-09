@@ -1,12 +1,12 @@
 """
 Mentoring Bot
 
-Author: Denis Odesskiy (MyFreeIT)
-Description: This script implements a Telegram chat-bot for the IT-school MyFreeIT.
-It handles participant registration, password verification, session management between
-the participant and a mentor, and message forwarding.
+Автор: Denis Odesskiy (MyFreeIT)
+Описание: Этот скрипт реализует Telegram-бота для IT-школы MyFreeIT.
+Он осуществляет регистрацию участников, проверку пароля, установление сессии между
+участником и ментором, а также пересылку сообщений между ними.
 
-License: The product is the personal property of the author (Denis Odesskiy (MyFreeIT)) – see LICENSE.
+Лицензия: Продукт является личной собственностью автора (Denis Odesskiy (MyFreeIT)) – см. LICENSE.
 """
 
 import os
@@ -17,7 +17,7 @@ from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from aiogram.fsm.storage.memory import MemoryStorage
 from dotenv import load_dotenv
 
-# Load environment variables from .env file
+# Загружаем переменные окружения из файла .env
 load_dotenv()
 TOKEN = os.getenv("BOT_TOKEN")
 MENTOR_ID = int(os.getenv("MENTOR_ID"))
@@ -26,9 +26,9 @@ ACCESS_PASSWORD = os.getenv("ACCESS_PASSWORD")
 
 class MentorChatBot:
     """
-    Implements the chat-bot logic for the IT-school MyFreeIT.
-    Handles registration, password verification, establishing session between a participant and a mentor,
-    and message forwarding between them.
+    Реализует логику чат-бота для IT-школы MyFreeIT:
+    регистрация участников, проверка пароля, установление сессии между участником и ментором,
+    а также пересылка сообщений между ними.
     """
 
     def __init__(self, token, mentor_id, access_password):
@@ -36,19 +36,19 @@ class MentorChatBot:
         self.dp = Dispatcher(storage=MemoryStorage())
         self.mentor_id = mentor_id
         self.access_password = access_password
-        self.users = {}
-        self.sessions = {}
-        self.waitlist = []
-        self.history = {}
-        self.awaiting_name = {}  # Flag to keep track of users waiting for custom name input
+        self.users = {}  # {user_id: имя}
+        self.sessions = {}  # Активные сессии: ментор <-> участник
+        self.waitlist = []  # Очередь ожидающих подключения участников
+        self.history = {}  # История сообщений для каждого пользователя
+        self.awaiting_name = {}  # Отслеживает пользователей, ожидающих ввода имени
         self.register_handlers()
 
     def register_handlers(self):
-        # /start command
+        # Команда /start
         self.dp.message.register(self.send_welcome, Command("start"))
         self.dp.callback_query.register(self.enter_school, lambda c: c.data == "enter_school")
 
-        # Handle password verification for unregistered participants
+        # Проверка пароля для незарегистрированных участников (и не ожидающих ввода имени)
         self.dp.message.register(
             self.check_password,
             lambda msg: (msg.from_user.id not in self.users)
@@ -56,7 +56,7 @@ class MentorChatBot:
                         and (msg.from_user.id not in self.awaiting_name)
         )
 
-        # If participant already registered, show the "Call mentor" button
+        # Если участник уже зарегистрирован, показываем кнопку "Вызвать ментора"
         self.dp.message.register(
             self.waiting_message,
             lambda msg: (msg.from_user.id in self.users)
@@ -64,17 +64,17 @@ class MentorChatBot:
                         and (msg.from_user.id != self.mentor_id)
         )
 
-        # Forward messages from participant to mentor
+        # Пересылка сообщений участника ментору (только если сессия активна)
         self.dp.message.register(
             self.forward_to_mentor,
             lambda msg: (msg.from_user.id in self.users) and (msg.from_user.id in self.sessions)
         )
 
-        # Mentor commands via slash commands /join and /end
+        # Менторские команды через слэш: /join и /end
         self.dp.message.register(self.join_chat, Command("join"))
         self.dp.message.register(self.end_chat, Command("end"))
 
-        # Inline menu for mentor message forwarding (skipping texts starting with '/')
+        # Пересылка сообщений ментора участнику (inline сообщения, пропуская команды)
         self.dp.message.register(
             self.forward_to_user,
             lambda msg: (msg.from_user.id == self.mentor_id)
@@ -82,28 +82,28 @@ class MentorChatBot:
                         and (not (msg.text and msg.text.startswith('/')))
         )
 
-        # Callback for participant button "Call mentor"
+        # Кнопка "Вызвать ментора" для участников
         self.dp.callback_query.register(self.call_mentor, lambda c: c.data == "call_mentor")
 
-        # Callbacks for handling missing username
+        # Обработка отсутствия имени в профиле: выбор "Войти как Аноним" или "Ввести имя"
         self.dp.callback_query.register(self.use_anonymous, lambda c: c.data == "use_anonymous")
         self.dp.callback_query.register(self.enter_custom_name, lambda c: c.data == "enter_custom_name")
         self.dp.message.register(self.set_custom_name, lambda msg: msg.from_user.id in self.awaiting_name)
 
-        # Callback for mentor inline‑menu buttons
+        # Callback для менторского inline‑меню (доступно только ментору)
         self.dp.callback_query.register(self.mentor_join, lambda c: c.data == "mentor_join")
         self.dp.callback_query.register(self.mentor_end, lambda c: c.data == "mentor_end")
 
     async def delete_webhook(self):
-        """Deletes the webhook before starting polling to avoid conflicts."""
+        """Удаляет существующий webhook перед запуском polling, чтобы избежать конфликтов."""
         await self.bot.delete_webhook(drop_pending_updates=True)
 
     async def send_welcome(self, message: types.Message):
         """
-        Sends a welcome message.
-          - If user is the mentor, a menu with "Join" and "End chat" buttons is shown.
-          - If the participant is registered, shows the "Call mentor" button.
-          - Otherwise, presents the "Enter" button.
+        Отправляет приветственное сообщение:
+          - Для ментора отображает меню с кнопками "Присоединиться" и "Завершить чат".
+          - Для зарегистрированных участников – кнопку "Вызвать ментора".
+          - Для новых пользователей – кнопку "Войти".
         """
         if message.from_user.id == self.mentor_id:
             keyboard = InlineKeyboardMarkup(inline_keyboard=[
@@ -118,7 +118,7 @@ class MentorChatBot:
                     [InlineKeyboardButton(text="Вызвать ментора", callback_data="call_mentor")]
                 ])
                 await message.answer(
-                    "👋 Вы уже зарегистрированы. Если хотите снова вызвать ментора, нажмите кнопку ниже.",
+                    "👋 Вы уже зарегистрированы. Если хотите вызвать ментора, нажмите кнопку ниже.",
                     reply_markup=keyboard
                 )
             else:
@@ -131,7 +131,7 @@ class MentorChatBot:
                 )
 
     async def enter_school(self, callback_query: types.CallbackQuery):
-        """Handles the 'Enter' button click, prompting the user to input the access password."""
+        """Запрос ввода пароля для доступа в систему IT-школы."""
         await self.bot.send_message(
             callback_query.from_user.id,
             "🔑 Пожалуйста, введите пароль для доступа в систему IT-школы."
@@ -140,14 +140,14 @@ class MentorChatBot:
 
     async def check_password(self, message: types.Message):
         """
-        Checks the entered password.
-          - For mentor: registration is performed via /start.
-          - For participants: if username is missing, offers options for registration.
+        Проверяет введённый пароль:
+          - Для ментора: используется имя из профиля (если отсутствует, подставляется "Ментор").
+          - Для участников: если в профиле отсутствует имя, предлагается выбор регистрации как «Аноним» или ввести имя.
         """
         if message.text == self.access_password:
             if message.from_user.id == self.mentor_id:
-                self.users[
-                    message.from_user.id] = message.from_user.username if message.from_user.username else "Ментор"
+                name = message.from_user.username if message.from_user.username else "Ментор"
+                self.users[message.from_user.id] = name
                 self.history[message.from_user.id] = []
                 await message.answer("✅ Пароль верный! Добро пожаловать, ментор!")
             else:
@@ -171,7 +171,7 @@ class MentorChatBot:
 
     async def set_custom_name(self, message: types.Message):
         """
-        Uses the entered text as the user's name if waiting for custom name input.
+        Использует введённый текст как имя пользователя при регистрации.
         """
         user_id = message.from_user.id
         if user_id in self.awaiting_name:
@@ -189,7 +189,7 @@ class MentorChatBot:
 
     async def waiting_message(self, message: types.Message):
         """
-        Notifies the participant that they are already registered and provides the "Call mentor" button.
+        Уведомляет зарегистрированных участников и предоставляет кнопку "Вызвать ментора".
         """
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="Вызвать ментора", callback_data="call_mentor")]
@@ -199,18 +199,22 @@ class MentorChatBot:
 
     async def call_mentor(self, callback_query: types.CallbackQuery):
         """
-        Notifies the mentor about a participant's request.
-        If a session is active, the participant is added to the waiting list.
+        Отправляет запрос на подключение к ментору.
+        Если сессия активна, участник добавляется в очередь.
         """
         user_id = callback_query.from_user.id
-        username = self.users.get(user_id, "Неизвестный")
+        username = self.users.get(user_id)
+        if not username:
+            await self.bot.send_message(user_id, "Пожалуйста, зарегистрируйтесь перед вызовом ментора.")
+            await callback_query.answer()
+            return
+
         if self.mentor_id in self.sessions:
             if user_id not in self.waitlist:
                 self.waitlist.append(user_id)
                 await self.bot.send_message(
                     self.mentor_id,
-                    f"⚡ Участник {username} ({user_id}) добавлен в очередь ожидания. "
-                    "Используйте кнопку 'Присоединиться' или команду /join после завершения текущего чата."
+                    f"⚡ Участник {username} ({user_id}) добавлен в очередь ожидания. Используйте кнопку 'Присоединиться' или команду /join после завершения текущего чата."
                 )
             else:
                 await self.bot.send_message(user_id, "Вы уже в очереди на подключение к ментору.")
@@ -224,7 +228,7 @@ class MentorChatBot:
 
     async def use_anonymous(self, callback: types.CallbackQuery):
         """
-        Registers the participant under the name "Аноним".
+        Регистрирует участника как "Аноним".
         """
         user_id = callback.from_user.id
         self.users[user_id] = "Аноним"
@@ -237,7 +241,7 @@ class MentorChatBot:
 
     async def enter_custom_name(self, callback: types.CallbackQuery):
         """
-        Switches the user to custom name input mode.
+        Переводит участника в режим ввода собственного имени.
         """
         user_id = callback.from_user.id
         self.awaiting_name[user_id] = True
@@ -246,8 +250,8 @@ class MentorChatBot:
 
     async def join_chat(self, message: types.Message):
         """
-        Mentor command to join a waiting participant.
-        If a session is already active or no participant is waiting, it notifies accordingly.
+        Команда ментора для подключения к ожидающему участнику.
+        Только ментор может выполнять эту команду.
         """
         if message.from_user.id != self.mentor_id:
             await message.answer("❌ У вас нет прав ментора!")
@@ -268,17 +272,18 @@ class MentorChatBot:
 
         self.sessions[self.mentor_id] = user_id
         self.sessions[user_id] = self.mentor_id
-        await message.answer(f"📩 Вы подключены к участнику {self.users.get(user_id, 'Неизвестный')}.")
+        await message.answer(f"📩 Вы подключены к участнику {self.users.get(user_id)}.")
         await self.bot.send_message(user_id, "👨‍🏫 Ментор присоединился к чату и готов помочь!")
 
     async def mentor_join(self, callback: types.CallbackQuery):
         """
-        Handler for the mentor inline button "Присоединиться".
+        Callback для кнопки "Присоединиться" ментору (доступно только ментору).
         """
         if callback.from_user.id != self.mentor_id:
             await callback.answer("❌ У вас нет прав ментора!", show_alert=True)
             return
 
+        # Создаем фиктивное сообщение для вызова join_chat
         class FakeMessage:
             pass
 
@@ -290,7 +295,7 @@ class MentorChatBot:
 
     async def mentor_end(self, callback: types.CallbackQuery):
         """
-        Handler for the mentor inline button "Завершить чат".
+        Callback для кнопки "Завершить чат" ментору (доступно только ментору).
         """
         if callback.from_user.id != self.mentor_id:
             await callback.answer("❌ У вас нет прав ментора!", show_alert=True)
@@ -307,7 +312,7 @@ class MentorChatBot:
 
     async def forward_to_mentor(self, message: types.Message):
         """
-        Forwards a participant's message to the mentor.
+        Пересылает сообщение участника ментору.
         """
         uid = message.from_user.id
         if uid not in self.sessions:
@@ -315,11 +320,12 @@ class MentorChatBot:
             return
         mentor_id = self.sessions[uid]
         self.history[uid].append(f"👤 Участник: {message.text}")
-        await self.bot.send_message(mentor_id, f"📩 Сообщение от участника:\n{message.text}")
+        await self.bot.send_message(mentor_id,
+                                    f"📩 Сообщение от участника:\n{message.text}")
 
     async def forward_to_user(self, message: types.Message):
         """
-        Forwards the mentor's message to the participant.
+        Пересылает сообщение ментора участнику.
         """
         if self.mentor_id not in self.sessions:
             await message.answer("❌ Нет активного участника.")
@@ -333,8 +339,9 @@ class MentorChatBot:
 
     async def end_chat(self, message: types.Message):
         """
-        Ends the current chat session. Only the mentor can end a session.
-        After ending, the participant is notified with an option to call the mentor again.
+        Завершает текущую сессию чата.
+        Только ментор может завершать чат.
+        После завершения участнику отправляется уведомление с кнопкой для повторного вызова ментора.
         """
         if message.from_user.id != self.mentor_id:
             await message.answer("❌ Чат завершить может только ментор!")
@@ -348,42 +355,38 @@ class MentorChatBot:
                 keyboard = InlineKeyboardMarkup(inline_keyboard=[
                     [InlineKeyboardButton(text="Вызвать ментора", callback_data="call_mentor")]
                 ])
-                await self.bot.send_message(
-                    user_id,
-                    "📌 Чат завершён ментором. Если хотите снова вызвать ментора, нажмите кнопку ниже.",
-                    reply_markup=keyboard
-                )
+                await self.bot.send_message(user_id,
+                                            "📌 Чат завершён ментором. Если хотите снова вызвать ментора, нажмите кнопку ниже.",
+                                            reply_markup=keyboard)
             await message.answer("✅ Чат завершён.")
             if self.waitlist:
                 next_id = self.waitlist[0]
                 await self.bot.send_message(
                     self.mentor_id,
-                    f"⚡ Следующий студент ({self.users.get(next_id, 'Неизвестный')}) ожидает подключения. Используйте кнопку 'Присоединиться' или команду /join."
+                    f"⚡ Следующий студент ({self.users.get(next_id)}) ожидает подключения. Используйте кнопку 'Присоединиться' или команду /join."
                 )
         else:
             await message.answer("❌ Нет активного чата для завершения.")
 
     async def start_polling(self):
-        """
-        Deletes any existing webhook and starts long polling.
-        """
+        """Удаляет существующий webhook и запускает polling."""
         await self.delete_webhook()
         await self.dp.start_polling(self.bot)
 
 
 if __name__ == "__main__":
-    bot = MentorChatBot(TOKEN, MENTOR_ID, ACCESS_PASSWORD)
+    bot_instance = MentorChatBot(TOKEN, MENTOR_ID, ACCESS_PASSWORD)
 
 
     async def run_web_server():
         """
-        Starts a minimal HTTP server that listens on the port specified by the environment variable.
-        This prevents Render from timing out due to the absence of any open ports.
+        Запускает минимальный HTTP-сервер (с использованием aiohttp), который слушает порт,
+        указанный в переменной окружения PORT. Это предотвращает таймаут Render из-за отсутствия открытого порта.
         """
         from aiohttp import web
 
         async def handle(request):
-            return web.Response(text="Mentoring Bot is running!")
+            return web.Response(text="Менторский бот работает!")
 
         app = web.Application()
         app.add_routes([web.get("/", handle)])
@@ -392,16 +395,16 @@ if __name__ == "__main__":
         await runner.setup()
         site = web.TCPSite(runner, "0.0.0.0", port)
         await site.start()
-        print(f"HTTP server is running on port {port}")
-        # Keep the HTTP server running indefinitely.
+        print(f"HTTP-сервер запущен на порту {port}")
+        # Держим HTTP-сервер запущенным бесконечно.
         while True:
             await asyncio.sleep(3600)
 
 
     async def main():
-        # Run both the Telegram bot (via polling) and the HTTP server concurrently.
+        # Запускаем одновременно бота (polling) и веб-сервер.
         await asyncio.gather(
-            bot.start_polling(),
+            bot_instance.start_polling(),
             run_web_server()
         )
 
