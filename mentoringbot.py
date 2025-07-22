@@ -359,7 +359,7 @@ async def keep_alive():
     Периодически отправляет GET-запрос на собственный сервер,
     чтобы предотвратить засыпание контейнера на Render.
     """
-    url = "https://yourapp.onrender.com"  # Замените на URL вашего приложения
+    url = "https://mentoringbot.onrender.com"
     while True:
         try:
             async with aiohttp.ClientSession() as session:
@@ -367,7 +367,7 @@ async def keep_alive():
                     print(f"Keep-Alive ping status: {response.status}")
         except Exception as e:
             print(f"Keep-Alive error: {e}")
-        await asyncio.sleep(840)  # 14 минут
+        await asyncio.sleep(600)  # 10 минут
 
 
 async def run_web_server():
